@@ -4,17 +4,73 @@
 
 Single-command deployment in ~10 minutes. Zero interaction required.
 
+## Prerequisites
+
+### 1. Install hcloud CLI
+
+```bash
+# macOS
+brew install hcloud
+
+# Linux
+wget https://github.com/hetznercloud/cli/releases/download/v1.42.0/hcloud-linux-amd64.tar.gz
+tar -xzf hcloud-linux-amd64.tar.gz
+sudo mv hcloud /usr/local/bin/
+```
+
+### 2. Create SSH Key Pair
+
+```bash
+# Generate a new SSH key (or use existing)
+ssh-keygen -t ed25519 -f ~/.ssh/omarchy_ed25519 -C "omarchy@hetzner"
+
+# This creates:
+# ~/.ssh/omarchy_ed25519      (private key - keep secure!)
+# ~/.ssh/omarchy_ed25519.pub  (public key - upload to Hetzner)
+```
+
+### 3. Add SSH Key to Hetzner
+
+**Via CLI:**
+```bash
+hcloud ssh-key create --name omarchy-ssh --public-key-from-file ~/.ssh/omarchy_ed25519.pub
+```
+
+**Via Web Console:**
+1. Go to https://console.hetzner.cloud/
+2. Select your project
+3. Navigate to Security → SSH Keys
+4. Click "Add SSH Key"
+5. Paste contents of `~/.ssh/omarchy_ed25519.pub`
+6. Name it **exactly** `omarchy-ssh` (script expects this name)
+
+### 4. Get API Token
+
+1. Go to https://console.hetzner.cloud/
+2. Select your project
+3. Navigate to Security → API Tokens
+4. Generate new token with Read & Write permissions
+5. Copy the token (you'll only see it once!)
+
 ## Quick Start
 
 ```bash
-# 1. Get Hetzner API token from https://console.hetzner.cloud/
+# 1. Set your Hetzner API token
 export HCLOUD_TOKEN="your-token-here"
 
-# 2. Create SSH key in Hetzner (name it 'omarchy-ssh')
-
-# 3. Deploy
+# 2. Deploy (uses the 'omarchy-ssh' key you created above)
 ./deploy.sh
 ```
+
+**How SSH Authentication Works:**
+
+The script uses your SSH key in three phases:
+
+1. **Server Creation**: Hetzner injects your public key into the temporary Ubuntu image
+2. **Arch ISO Phase**: The Arch ISO automatically imports keys from mounted disks
+3. **Installed System**: Your key is copied during installation for permanent access
+
+No passwords needed at any stage!
 
 That's it. In ~10 minutes you'll have:
 - Arch Linux with LUKS encryption + btrfs
