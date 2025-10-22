@@ -66,27 +66,34 @@ sleep 15
 hcloud server poweron "$SERVER_NAME" > /dev/null
 ssh-keygen -R "$SERVER_IP" 2>/dev/null || true
 
-echo "⏳ Waiting for Arch ISO to boot (35s)..."
-sleep 35
+echo "⏳ Waiting for Arch ISO to boot (60s)..."
+sleep 60
 
 # Configure SSH key for Arch ISO root access
-# Arch ISO allows password auth, so we'll inject our key via console
 echo "🔑 Configuring SSH access to Arch ISO..."
 
-# Try SSH connection and inject our key if needed
-for i in {1..10}; do
-    # Test if our key already works
-    if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o PasswordAuthentication=no root@"$SERVER_IP" 'echo ready' &>/dev/null 2>&1; then
-        echo "✅ SSH key authentication working"
-        break
+# First, test if SSH key already works (Hetzner pre-injects it if --ssh-key was used)
+echo "Testing if SSH key authentication already works..."
+if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o PasswordAuthentication=no root@"$SERVER_IP" 'echo ready' &>/dev/null 2>&1; then
+    echo "✅ SSH key authentication working (pre-injected by Hetzner)"
+else
+    # Key doesn't work yet - need to inject it via password auth
+    # Arch ISO allows password auth, so we'll inject our key via console
+    echo "🔑 SSH key not working, attempting injection via password auth..."
+
+    # Check if sshpass is available
+    if ! command -v sshpass &> /dev/null; then
+        echo "⚠️  sshpass not installed - SSH key must exist in Hetzner for Arch ISO access"
+        echo "Install: brew install hudochenkov/sshpass/sshpass (macOS) or apt-get install sshpass (Linux)"
+        echo ""
+        PUBKEY=$(cat ~/.ssh/omarchy_ed25519.pub)
+        echo "Alternative: Manually run on Arch ISO console:"
+        echo "  mkdir -p /root/.ssh && echo '$PUBKEY' > /root/.ssh/authorized_keys"
+        exit 1
     fi
 
-    # If key doesn't work, use password auth to inject it
-    # Arch ISO defaults to empty password or "root"
-    if [ $i -eq 1 ]; then
-        echo "Attempting to inject SSH key into Arch ISO..."
-        # Create a script to inject the key
-        cat > /tmp/inject_key.sh << 'INJECT_EOF'
+    # Create a script to inject the key
+    cat > /tmp/inject_key.sh << 'INJECT_EOF'
 #!/bin/bash
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
@@ -97,41 +104,63 @@ chmod 600 /root/.ssh/authorized_keys
 echo "Key injected successfully"
 INJECT_EOF
 
-        # Replace placeholder with actual public key
-        PUBKEY=$(cat ~/.ssh/omarchy_ed25519.pub)
-        sed -i '' "s|PUBKEY_PLACEHOLDER|$PUBKEY|" /tmp/inject_key.sh
+    # Replace placeholder with actual public key
+    PUBKEY=$(cat ~/.ssh/omarchy_ed25519.pub)
+    sed -i '' "s|PUBKEY_PLACEHOLDER|$PUBKEY|" /tmp/inject_key.sh
 
-        # Try to inject using sshpass with empty password
-        if command -v sshpass &> /dev/null; then
-            sshpass -p '' ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null || \
-            sshpass -p 'root' ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null
-        else
-            echo "⚠️  sshpass not installed - SSH key must exist in Hetzner for Arch ISO access"
-            echo "Install: brew install hudochenkov/sshpass/sshpass (macOS) or apt-get install sshpass (Linux)"
-            echo ""
-            echo "Alternative: Manually run on Arch ISO console:"
-            echo "  mkdir -p /root/.ssh && echo '$PUBKEY' > /root/.ssh/authorized_keys"
-            exit 1
+    # Retry injection multiple times (ISO might still be booting)
+    INJECTION_SUCCESS=false
+    for attempt in {1..10}; do
+        echo "Injection attempt $attempt/10..."
+
+        # Try empty password first, then 'root' password
+        if sshpass -p '' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null; then
+            echo "✅ Key injected with empty password"
+            INJECTION_SUCCESS=true
+            break
+        elif sshpass -p 'root' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null; then
+            echo "✅ Key injected with 'root' password"
+            INJECTION_SUCCESS=true
+            break
         fi
 
-        rm /tmp/inject_key.sh
-        sleep 2
-    fi
+        if [ $attempt -lt 10 ]; then
+            echo "Injection failed, waiting 5s before retry..."
+            sleep 5
+        fi
+    done
 
-    # Test again
-    if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" 'echo ready' &>/dev/null; then
-        echo "✅ SSH ready"
-        break
-    fi
+    rm /tmp/inject_key.sh
 
-    if [ $i -eq 10 ]; then
-        echo "❌ SSH connection failed after 10 attempts"
-        echo "Debug: Try manually: ssh root@$SERVER_IP"
+    if [ "$INJECTION_SUCCESS" = false ]; then
+        echo "❌ Failed to inject key after 10 attempts"
+        echo "This usually means:"
+        echo "  1. Arch ISO hasn't booted properly"
+        echo "  2. Password auth is disabled"
+        echo "  3. Network issue"
         exit 1
     fi
 
-    sleep 5
-done
+    sleep 2
+
+    # Verify the key works after injection
+    echo "Verifying SSH key authentication..."
+    for i in {1..10}; do
+        if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" 'echo ready' &>/dev/null; then
+            echo "✅ SSH key authentication verified"
+            break
+        fi
+
+        if [ $i -eq 10 ]; then
+            echo "❌ SSH key authentication failed after injection"
+            echo "Debug: Try manually: ssh -i ~/.ssh/omarchy_ed25519 root@$SERVER_IP"
+            exit 1
+        fi
+
+        echo "Waiting for SSH (attempt $i/10)..."
+        sleep 5
+    done
+fi
 
 # Verify we actually booted from Arch ISO (not from installed disk)
 echo "🔍 Verifying boot environment..."
@@ -303,17 +332,16 @@ sudo usermod -aG seat $USER
 sudo modprobe vkms
 echo "vkms" | sudo tee /etc/modules-load.d/vkms.conf
 
-# Create Hyprland config
+# Create minimal Hyprland config (modular for compatibility with Omarchy)
 mkdir -p ~/.config/hypr
+
+# Main config
 cat > ~/.config/hypr/hyprland.conf <<'EOF'
-monitor=Virtual-1,1920x1080@60,0x0,1
-
-exec-once=waybar &
-exec-once=sleep 3 && wayvnc --output=Virtual-1 0.0.0.0 5900 &
-
-env = WLR_RENDERER_ALLOW_SOFTWARE,1
-env = WLR_NO_HARDWARE_CURSORS,1
-env = WLR_BACKENDS,headless
+# Minimal Hyprland config for VNC access
+# If Omarchy is installed, this will be replaced with a modular config
+source = ~/.config/hypr/envs.conf
+source = ~/.config/hypr/monitors.conf
+source = ~/.config/hypr/autostart.conf
 
 general {
     gaps_in = 5
@@ -330,6 +358,24 @@ decoration {
 
 bind = SUPER, Q, killactive
 bind = SUPER, RETURN, exec, kitty
+EOF
+
+# VNC-specific environment variables
+cat > ~/.config/hypr/envs.conf <<'EOF'
+env = WLR_RENDERER_ALLOW_SOFTWARE,1
+env = WLR_NO_HARDWARE_CURSORS,1
+env = WLR_BACKENDS,headless
+EOF
+
+# Virtual monitor configuration
+cat > ~/.config/hypr/monitors.conf <<'EOF'
+monitor=Virtual-1,1920x1080@60,0x0,1
+EOF
+
+# Autostart applications
+cat > ~/.config/hypr/autostart.conf <<'EOF'
+exec-once=waybar &
+exec-once=sleep 3 && wayvnc --output=Virtual-1 0.0.0.0 5900 &
 EOF
 
 # Minimal waybar config
@@ -382,14 +428,36 @@ mkdir -p ~/.config/omarchy/current
 ln -sf ~/.local/share/omarchy/themes/catppuccin ~/.config/omarchy/current/theme
 ln -sf ~/.local/share/omarchy/themes/catppuccin/backgrounds/1-catppuccin.png ~/.config/omarchy/current/background
 
-# User configs
+# User configs - Create empty files first
 touch ~/.config/hypr/{input,bindings,envs,looknfeel}.conf
 
+# CRITICAL: Configure for VNC headless operation
+# These settings enable software rendering and virtual displays for remote access
+cat > ~/.config/hypr/envs.conf <<'ENVEOF'
+# VNC headless rendering setup (required for remote desktop without GPU)
+env = WLR_RENDERER_ALLOW_SOFTWARE,1
+env = WLR_NO_HARDWARE_CURSORS,1
+env = WLR_BACKENDS,headless
+env = GDK_SCALE,1
+ENVEOF
+
+cat > ~/.config/hypr/monitors.conf <<'MONEOF'
+# VNC virtual monitor configuration
+# Note: This overrides Omarchy's default monitor=,preferred,auto,auto setting
+monitor=Virtual-1,1920x1080@60,0x0,1
+MONEOF
+
+cat > ~/.config/hypr/autostart.conf <<'AUTOEOF'
+# Start WayVNC for remote access
+# Waits 3s for Hyprland to initialize, then binds to Virtual-1 output
+exec-once = sleep 3 && wayvnc --output=Virtual-1 0.0.0.0 5900
+AUTOEOF
+
 # Install packages (with rust/rustup workaround)
-PACKAGES=\$(cat ~/.local/share/omarchy/install/omarchy-base.packages | grep -v "^#" | grep -v "^cargo$" | tr "\n" " ")
+PACKAGES=$(cat ~/.local/share/omarchy/install/omarchy-base.packages | grep -v "^#" | grep -v "^cargo$" | tr "\n" " ")
 (yes "n"; yes "2") | yay -S --needed --noconfirm \
   --answerdiff None --answerclean None --answeredit None \
-  --mflags "--noconfirm" \$PACKAGES || true
+  --mflags "--noconfirm" $PACKAGES || true
 
 # Post-install
 mkdir -p ~/.local/share/fonts
@@ -415,6 +483,60 @@ OMARCHY
 
     echo "✅ Omarchy installed"
 fi
+
+# ============================================================================
+# PHASE 5: VNC VERIFICATION
+# ============================================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔍 Phase 5: Verifying VNC Configuration"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+ssh -i ~/.ssh/omarchy_ed25519 -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" bash <<'VERIFY'
+set -euo pipefail
+
+# Check if critical VNC configs exist and contain required settings
+echo "Checking Hyprland VNC configuration..."
+
+if ! grep -q "WLR_BACKENDS=headless" ~/.config/hypr/envs.conf 2>/dev/null; then
+    echo "⚠️  WARNING: Missing WLR_BACKENDS=headless in envs.conf"
+    echo "   VNC may show grey screen. Adding now..."
+    cat >> ~/.config/hypr/envs.conf <<'ENVFIX'
+env = WLR_RENDERER_ALLOW_SOFTWARE,1
+env = WLR_NO_HARDWARE_CURSORS,1
+env = WLR_BACKENDS,headless
+ENVFIX
+fi
+
+if ! grep -q "Virtual-1" ~/.config/hypr/monitors.conf 2>/dev/null; then
+    echo "⚠️  WARNING: Missing Virtual-1 monitor config"
+    echo "   Adding now..."
+    echo "monitor=Virtual-1,1920x1080@60,0x0,1" > ~/.config/hypr/monitors.conf
+fi
+
+if ! grep -q "wayvnc" ~/.config/hypr/autostart.conf 2>/dev/null; then
+    echo "⚠️  WARNING: Missing WayVNC autostart"
+    echo "   Adding now..."
+    echo "exec-once = sleep 3 && wayvnc --output=Virtual-1 0.0.0.0 5900" >> ~/.config/hypr/autostart.conf
+fi
+
+# Check if processes are running
+if pgrep -x "Hyprland" > /dev/null; then
+    echo "✅ Hyprland is running"
+else
+    echo "⚠️  Hyprland not running - VNC won't work until started"
+fi
+
+if pgrep -x "wayvnc" > /dev/null; then
+    echo "✅ WayVNC is running"
+else
+    echo "⚠️  WayVNC not running - VNC connections will fail"
+fi
+
+echo "VNC configuration verified"
+VERIFY
+
+echo "✅ VNC verification complete"
 
 # ============================================================================
 # COMPLETION
