@@ -1,3 +1,4 @@
 .env
 *.log
 .DS_Store
+*_LOCAL.md
