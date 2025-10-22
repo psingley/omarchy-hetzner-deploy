@@ -64,12 +64,67 @@ ssh-keygen -R "$SERVER_IP" 2>/dev/null || true
 echo "⏳ Waiting for Arch ISO to boot (30s)..."
 sleep 30
 
-# Wait for SSH
+# Configure SSH key for Arch ISO root access
+# Arch ISO allows password auth, so we'll inject our key via console
+echo "🔑 Configuring SSH access to Arch ISO..."
+
+# Try SSH connection and inject our key if needed
 for i in {1..10}; do
-    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" 'echo ready' &>/dev/null; then
+    # Test if our key already works
+    if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o PasswordAuthentication=no root@"$SERVER_IP" 'echo ready' &>/dev/null 2>&1; then
+        echo "✅ SSH key authentication working"
+        break
+    fi
+
+    # If key doesn't work, use password auth to inject it
+    # Arch ISO defaults to empty password or "root"
+    if [ $i -eq 1 ]; then
+        echo "Attempting to inject SSH key into Arch ISO..."
+        # Create a script to inject the key
+        cat > /tmp/inject_key.sh << 'INJECT_EOF'
+#!/bin/bash
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+cat > /root/.ssh/authorized_keys << 'KEY_EOF'
+PUBKEY_PLACEHOLDER
+KEY_EOF
+chmod 600 /root/.ssh/authorized_keys
+echo "Key injected successfully"
+INJECT_EOF
+
+        # Replace placeholder with actual public key
+        PUBKEY=$(cat ~/.ssh/omarchy_ed25519.pub)
+        sed -i '' "s|PUBKEY_PLACEHOLDER|$PUBKEY|" /tmp/inject_key.sh
+
+        # Try to inject using sshpass with empty password
+        if command -v sshpass &> /dev/null; then
+            sshpass -p '' ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null || \
+            sshpass -p 'root' ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" 'bash -s' < /tmp/inject_key.sh 2>/dev/null
+        else
+            echo "⚠️  sshpass not installed - SSH key must exist in Hetzner for Arch ISO access"
+            echo "Install: brew install hudochenkov/sshpass/sshpass (macOS) or apt-get install sshpass (Linux)"
+            echo ""
+            echo "Alternative: Manually run on Arch ISO console:"
+            echo "  mkdir -p /root/.ssh && echo '$PUBKEY' > /root/.ssh/authorized_keys"
+            exit 1
+        fi
+
+        rm /tmp/inject_key.sh
+        sleep 2
+    fi
+
+    # Test again
+    if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" 'echo ready' &>/dev/null; then
         echo "✅ SSH ready"
         break
     fi
+
+    if [ $i -eq 10 ]; then
+        echo "❌ SSH connection failed after 10 attempts"
+        echo "Debug: Try manually: ssh root@$SERVER_IP"
+        exit 1
+    fi
+
     sleep 5
 done
 
@@ -81,7 +136,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "💾 Phase 2: Installing Arch Linux"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" bash <<INSTALL
+ssh -i ~/.ssh/omarchy_ed25519 -o StrictHostKeyChecking=no root@"$SERVER_IP" bash <<INSTALL
 
 set -euxo pipefail
 
@@ -182,7 +237,7 @@ sleep 60
 
 # Wait for SSH
 for i in {1..10}; do
-    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" 'echo ready' &>/dev/null; then
+    if ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" 'echo ready' &>/dev/null; then
         echo "✅ Booted into installed Arch"
         break
     fi
@@ -197,7 +252,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🖥️  Phase 3: Installing Hyprland + VNC"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-ssh -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" bash <<'HYPRLAND'
+ssh -i ~/.ssh/omarchy_ed25519 -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" bash <<'HYPRLAND'
 set -euxo pipefail
 
 # Install yay
@@ -282,7 +337,7 @@ if [ "$INSTALL_OMARCHY" = "true" ]; then
     echo "🎨 Phase 4: Installing Omarchy (958 packages)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    ssh -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" bash <<'OMARCHY'
+    ssh -i ~/.ssh/omarchy_ed25519 -o StrictHostKeyChecking=no $USERNAME@"$SERVER_IP" bash <<'OMARCHY'
 set -euxo pipefail
 
 # Clone Omarchy

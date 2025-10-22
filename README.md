@@ -6,17 +6,25 @@ Single-command deployment in ~10 minutes. Zero interaction required.
 
 ## Prerequisites
 
-### 1. Install hcloud CLI
+### 1. Install Required Tools
 
 ```bash
 # macOS
 brew install hcloud
+brew install hudochenkov/sshpass/sshpass
 
 # Linux
+# hcloud
 wget https://github.com/hetznercloud/cli/releases/download/v1.42.0/hcloud-linux-amd64.tar.gz
 tar -xzf hcloud-linux-amd64.tar.gz
 sudo mv hcloud /usr/local/bin/
+
+# sshpass (for Arch ISO key injection)
+sudo apt-get install sshpass  # Debian/Ubuntu
+sudo yum install sshpass       # RHEL/CentOS
 ```
+
+**Why sshpass?** The Arch Linux ISO allows password authentication. The script uses `sshpass` to automatically inject your SSH key into the ISO environment.
 
 ### 2. Create SSH Key Pair
 
