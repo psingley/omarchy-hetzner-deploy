@@ -58,11 +58,15 @@ SERVER_IP=$(hcloud server ip "$SERVER_NAME")
 echo "✅ Server created: $SERVER_IP"
 
 hcloud server attach-iso "$SERVER_NAME" archlinux-2025.02.01-x86_64.iso > /dev/null
-hcloud server reboot "$SERVER_NAME" > /dev/null
+# CRITICAL GOTCHA: 'reboot' boots from disk, not ISO. Must use shutdown + poweron!
+hcloud server shutdown "$SERVER_NAME" > /dev/null
+echo "⏳ Waiting for shutdown..."
+sleep 10
+hcloud server poweron "$SERVER_NAME" > /dev/null
 ssh-keygen -R "$SERVER_IP" 2>/dev/null || true
 
-echo "⏳ Waiting for Arch ISO to boot (30s)..."
-sleep 30
+echo "⏳ Waiting for Arch ISO to boot (35s)..."
+sleep 35
 
 # Configure SSH key for Arch ISO root access
 # Arch ISO allows password auth, so we'll inject our key via console
@@ -127,6 +131,20 @@ INJECT_EOF
 
     sleep 5
 done
+
+# Verify we actually booted from Arch ISO (not from installed disk)
+echo "🔍 Verifying boot environment..."
+BOOT_CHECK=$(ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" "mount | grep ' / ' | head -1" 2>/dev/null || echo "failed")
+if [[ "$BOOT_CHECK" != *"airootfs"* ]] && [[ "$BOOT_CHECK" != *"overlay"* ]]; then
+    echo "❌ ERROR: System did not boot from ISO (booted from disk instead)"
+    echo "   Boot check result: $BOOT_CHECK"
+    echo "   Expected: airootfs or overlay filesystem"
+    echo ""
+    echo "This usually means 'hcloud server reboot' booted from disk, not ISO."
+    echo "Try: hcloud server shutdown $SERVER_NAME && hcloud server poweron $SERVER_NAME"
+    exit 1
+fi
+echo "✅ Verified: Booted from Arch ISO ($BOOT_CHECK)"
 
 # ============================================================================
 # PHASE 2: INSTALL BASE ARCH LINUX
@@ -224,6 +242,19 @@ CHROOT
 umount -R /mnt
 cryptsetup close cryptroot
 INSTALL
+
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Arch installation failed"
+    echo "Check logs above for details"
+    exit 1
+fi
+
+# Verify installation
+echo "🔍 Verifying installation..."
+INSTALL_CHECK=$(ssh -i ~/.ssh/omarchy_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$SERVER_IP" "ls /mnt 2>/dev/null || echo 'unmounted'" 2>/dev/null)
+if [[ "$INSTALL_CHECK" != "unmounted" ]]; then
+    echo "⚠️  WARNING: /mnt still shows files (may be normal if unmount in progress)"
+fi
 
 echo "✅ Base Arch installed"
 

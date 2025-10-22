@@ -190,13 +190,16 @@ tail -f ~/wayvnc.log
 ```
 
 **Gotchas (all handled by deploy.sh):**
-1. BIOS boot partition required for GPT + GRUB
-2. LUKS keyfile needed for auto-boot
-3. VKMS module for headless GPU
-4. Monitor name is "Virtual-1" not "HEADLESS-1"
-5. wayvnc needs correct output name
-6. Environment vars required for Hyprland apps
-7. rust/rustup conflict when installing Omarchy
+1. **CRITICAL:** `hcloud server reboot` boots from disk, not ISO - must use `shutdown` + `poweron`
+2. Verify boot environment to confirm ISO boot (check for `airootfs` or `overlay` filesystem)
+3. SSH key injection needed for Arch ISO (requires `sshpass` or manual setup)
+4. BIOS boot partition required for GPT + GRUB
+5. LUKS keyfile needed for auto-boot
+6. VKMS module for headless GPU
+7. Monitor name is "Virtual-1" not "HEADLESS-1"
+8. wayvnc needs correct output name
+9. Environment vars required for Hyprland apps
+10. rust/rustup conflict when installing Omarchy
 
 ## Manual Steps (if needed)
 
