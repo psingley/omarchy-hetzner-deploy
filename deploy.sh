@@ -58,10 +58,11 @@ SERVER_IP=$(hcloud server ip "$SERVER_NAME")
 echo "✅ Server created: $SERVER_IP"
 
 hcloud server attach-iso "$SERVER_NAME" archlinux-2025.02.01-x86_64.iso > /dev/null
-# CRITICAL GOTCHA: 'reboot' boots from disk, not ISO. Must use shutdown + poweron!
-hcloud server shutdown "$SERVER_NAME" > /dev/null
-echo "⏳ Waiting for shutdown..."
-sleep 10
+# CRITICAL GOTCHA: 'reboot' boots from disk, not ISO. Must use poweroff + poweron!
+# Note: 'shutdown' is unreliable, 'poweroff' is more forceful and works consistently
+hcloud server poweroff "$SERVER_NAME" > /dev/null
+echo "⏳ Waiting for poweroff..."
+sleep 15
 hcloud server poweron "$SERVER_NAME" > /dev/null
 ssh-keygen -R "$SERVER_IP" 2>/dev/null || true
 

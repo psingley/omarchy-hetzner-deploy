@@ -190,16 +190,17 @@ tail -f ~/wayvnc.log
 ```
 
 **Gotchas (all handled by deploy.sh):**
-1. **CRITICAL:** `hcloud server reboot` boots from disk, not ISO - must use `shutdown` + `poweron`
-2. Verify boot environment to confirm ISO boot (check for `airootfs` or `overlay` filesystem)
-3. SSH key injection needed for Arch ISO (requires `sshpass` or manual setup)
-4. BIOS boot partition required for GPT + GRUB
-5. LUKS keyfile needed for auto-boot
-6. VKMS module for headless GPU
-7. Monitor name is "Virtual-1" not "HEADLESS-1"
-8. wayvnc needs correct output name
-9. Environment vars required for Hyprland apps
-10. rust/rustup conflict when installing Omarchy
+1. **CRITICAL:** `hcloud server reboot` boots from disk, not ISO - must use `poweroff` + `poweron`
+2. **CRITICAL:** `shutdown` is unreliable for ISO boot, use `poweroff` with 15s wait
+3. Verify boot environment to confirm ISO boot (check for `airootfs` or `overlay` filesystem)
+4. SSH key injection can hang when key already works (Hetzner pre-injects via `--ssh-key`)
+5. BIOS boot partition required for GPT + GRUB
+6. LUKS keyfile needed for auto-boot
+7. VKMS module for headless GPU
+8. Monitor name is "Virtual-1" not "HEADLESS-1"
+9. wayvnc needs correct output name
+10. Environment vars required for Hyprland apps
+11. rust/rustup conflict when installing Omarchy
 
 ## Manual Steps (if needed)
 
