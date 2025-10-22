@@ -172,15 +172,55 @@ Hetzner CPX31:
 
 ## Troubleshooting
 
-**VNC shows grey screen:**
+### VNC Grey Screen
+
+**Problem:** VNC client connects but shows only a grey/blank screen
+
+**Root Cause:** Hyprland requires specific environment variables for headless (VNC) operation:
+- `WLR_RENDERER_ALLOW_SOFTWARE=1` - Enable software rendering (no GPU)
+- `WLR_NO_HARDWARE_CURSORS=1` - Disable hardware cursor
+- `WLR_BACKENDS=headless` - Use headless backend for VNC
+
+**Why this happens:** If Omarchy is installed (Phase 4), it uses a modular config system with separate files:
+- `~/.config/hypr/envs.conf` - Environment variables
+- `~/.config/hypr/monitors.conf` - Monitor configuration
+- `~/.config/hypr/autostart.conf` - Startup applications
+
+If these files are empty or missing VNC-specific settings, Hyprland won't render to the virtual display.
+
+**Quick Fix:**
 ```bash
 ssh omarchy@YOUR_IP
-~/start-desktop.sh  # Restart Hyprland
+
+# 1. Configure environment for software rendering
+cat > ~/.config/hypr/envs.conf <<'EOF'
+env = WLR_RENDERER_ALLOW_SOFTWARE,1
+env = WLR_NO_HARDWARE_CURSORS,1
+env = WLR_BACKENDS,headless
+EOF
+
+# 2. Configure virtual monitor
+cat > ~/.config/hypr/monitors.conf <<'EOF'
+monitor=Virtual-1,1920x1080@60,0x0,1
+EOF
+
+# 3. Configure WayVNC autostart
+cat > ~/.config/hypr/autostart.conf <<'EOF'
+exec-once = sleep 3 && wayvnc --output=Virtual-1 0.0.0.0 5900
+EOF
+
+# 4. Restart Hyprland
+killall Hyprland wayvnc
+export WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_NO_HARDWARE_CURSORS=1 WLR_BACKENDS=headless
+sg seat -c "Hyprland > ~/hyprland.log 2>&1 &"
 ```
+
+**Note:** The deploy script now automatically sets these in Phase 3 and Phase 4 (after Omarchy install), and verifies them in Phase 5.
 
 **Check VNC is running:**
 ```bash
 ss -tulnp | grep 5900
+ps aux | grep wayvnc
 ```
 
 **View logs:**
@@ -189,18 +229,20 @@ tail -f ~/hyprland.log
 tail -f ~/wayvnc.log
 ```
 
-**Gotchas (all handled by deploy.sh):**
+### Known Gotchas (All Handled by deploy.sh)
+
 1. **CRITICAL:** `hcloud server reboot` boots from disk, not ISO - must use `poweroff` + `poweron`
 2. **CRITICAL:** `shutdown` is unreliable for ISO boot, use `poweroff` with 15s wait
-3. Verify boot environment to confirm ISO boot (check for `airootfs` or `overlay` filesystem)
-4. SSH key injection can hang when key already works (Hetzner pre-injects via `--ssh-key`)
-5. BIOS boot partition required for GPT + GRUB
-6. LUKS keyfile needed for auto-boot
-7. VKMS module for headless GPU
-8. Monitor name is "Virtual-1" not "HEADLESS-1"
-9. wayvnc needs correct output name
-10. Environment vars required for Hyprland apps
-11. rust/rustup conflict when installing Omarchy
+3. **CRITICAL:** Omarchy config overwrites VNC settings - must recreate after install (Phase 4)
+4. Verify boot environment to confirm ISO boot (check for `airootfs` or `overlay` filesystem)
+5. SSH key injection can hang when key already works (Hetzner pre-injects via `--ssh-key`)
+6. BIOS boot partition required for GPT + GRUB
+7. LUKS keyfile needed for auto-boot
+8. VKMS module for headless GPU
+9. Monitor name is "Virtual-1" not "HEADLESS-1"
+10. wayvnc needs correct output name and compositor ready (3s sleep)
+11. Environment vars required for Hyprland apps in headless mode
+12. rust/rustup conflict when installing Omarchy packages
 
 ## Manual Steps (if needed)
 
